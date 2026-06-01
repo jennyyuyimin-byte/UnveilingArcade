@@ -52,6 +52,64 @@ function RewardPopup({ theme, payload, onClose }) {
   );
 }
 
+// ── claim box (with sprinkles) — the fun gate that leads into payment ────────
+function ClaimBox({ theme, state, set, onClose }) {
+  const Icon = window.Icon;
+  const info = state.pendingBuy || { count: 1, price: 1 };
+  const count = info.count || 1;
+  const price = info.price != null ? info.price : count;
+  const [lifted, setLifted] = React.useState(false);
+
+  // festive sprinkles scattered around the box
+  const sprinkleColors = [theme.accent, theme.accent2 || theme.accent, theme.good || '#37d39b', '#ffd84d', '#ff6db5', '#6db5ff'];
+  const sprinkles = React.useMemo(() => [...Array(26)].map((_, i) => ({
+    left: Math.random() * 100, top: Math.random() * 100,
+    rot: Math.random() * 360, len: 7 + Math.random() * 7,
+    color: sprinkleColors[i % sprinkleColors.length], delay: (Math.random() * 1.4).toFixed(2),
+  })), []);
+
+  const claim = () => set({ sheet: 'payment' }); // straight into pay
+
+  return (
+    <div onClick={onClose} style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,.58)', backdropFilter: 'blur(3px)', animation: 'ug-fade .2s ease', padding: 24 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: theme.surface, borderRadius: 26, padding: '32px 24px 24px', width: '100%', maxWidth: 330,
+        textAlign: 'center', color: theme.text, boxShadow: '0 30px 70px rgba(0,0,0,.5)', border: `1px solid ${theme.line}`,
+        animation: 'ug-pop .36s cubic-bezier(.2,.9,.3,1.2)', position: 'relative', overflow: 'hidden' }}>
+
+        {/* sprinkles layer */}
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+          {sprinkles.map((s, i) => (
+            <span key={i} style={{ position: 'absolute', left: `${s.left}%`, top: `${s.top}%`, width: s.len, height: 3.5, borderRadius: 3,
+              background: s.color, transform: `rotate(${s.rot}deg)`, opacity: .9,
+              animation: `ug-bob 2.4s ease-in-out ${s.delay}s infinite` }} />
+          ))}
+        </div>
+
+        {/* gift box */}
+        <div onMouseEnter={() => setLifted(true)} onMouseLeave={() => setLifted(false)}
+          style={{ position: 'relative', width: 104, height: 104, margin: '6px auto 18px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            borderRadius: 26, background: theme.accent, boxShadow: theme.accentGlow,
+            animation: 'ug-bob 1.8s ease-in-out infinite', transition: 'transform .25s', transform: lifted ? 'translateY(-4px) scale(1.04)' : 'none' }}>
+          <Icon name="gift" size={54} color={theme.accentText} sw={1.6} />
+        </div>
+
+        <div style={{ fontFamily: theme.fontBody, fontSize: 11, letterSpacing: '.16em', textTransform: 'uppercase', color: theme.accent, fontWeight: 800, marginBottom: 6 }}>A surprise is inside</div>
+        <div style={{ fontFamily: theme.fontDisplay, fontWeight: theme.displayWeight, fontSize: 25, letterSpacing: theme.displayTracking, lineHeight: 1.1, marginBottom: 8 }}>
+          {count === 1 ? 'Your mystery reveal' : `${count} mystery reveals`}
+        </div>
+        <div style={{ color: theme.muted, fontFamily: theme.fontBody, fontSize: 14.5, lineHeight: 1.45, marginBottom: 22, padding: '0 8px' }}>
+          Every reveal hides a surprise — coupons, free pixels, even the jackpot. Claim to open yours.
+        </div>
+
+        <Btn theme={theme} size="lg" style={{ width: '100%' }} onClick={claim}>Claim · pay {fmt$(price)}</Btn>
+        <button onClick={onClose} style={{ marginTop: 12, border: 'none', background: 'transparent', cursor: 'pointer', color: theme.faint,
+          fontFamily: theme.fontBody, fontWeight: 600, fontSize: 13.5 }}>Maybe later</button>
+      </div>
+    </div>
+  );
+}
+
 // ── express payment — pay $1/pixel right away (Apple Pay first, no cart) ──────
 function PaymentSheet({ theme, state, set, onClose, toast, onPaid }) {
   const Icon = window.Icon;
@@ -360,4 +418,4 @@ function CompletionOverlay({ theme, state, set, onClose, hostRef }) {
   );
 }
 
-Object.assign(window, { MiniReveal, RewardPopup, PaymentSheet, DailySpinSheet, InviteSheet, StorySheet, LeaderboardSheet, ShareSheet, CompletionOverlay });
+Object.assign(window, { MiniReveal, RewardPopup, ClaimBox, PaymentSheet, DailySpinSheet, InviteSheet, StorySheet, LeaderboardSheet, ShareSheet, CompletionOverlay });
