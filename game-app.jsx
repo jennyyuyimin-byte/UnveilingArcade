@@ -31,9 +31,10 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
       const r = window.rollReward(); window.applyReward(set, r.resolved); set({ reward: r });
       return;
     }
-    // payment required → straight to express checkout (Apple Pay first)
+    // payment required → show the claim box (with sprinkles) first, then pay
     const price = cur.couponPct ? +(basePrice * (1 - cur.couponPct)).toFixed(2) : basePrice;
-    set({ sheet: 'payment', pendingBuy: { count: 1, price, index } });
+    const reward = window.rollReward();
+    set({ sheet: 'claim', pendingBuy: { count: 1, price, index, reward } });
   };
 
   // express bundle: 5 pixels for $4, paid right away
@@ -41,7 +42,8 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
     const cur = peekState();
     let n = 0; for (let i = 0; i < TOTAL; i++) if (!cur.revealed[i]) n++;
     if (!n) return;
-    set({ sheet: 'payment', pendingBuy: { count: Math.min(5, n), price: 4 } });
+    const reward = window.rollReward();
+    set({ sheet: 'claim', pendingBuy: { count: Math.min(5, n), price: 4, reward } });
   };
 
   // called by PaymentSheet after a successful payment — reveal the paid pixel(s)
@@ -58,7 +60,10 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
     set((st) => { const rev = { ...st.revealed }; picks.forEach((i) => (rev[i] = 'me')); return { ...st, revealed: rev, myPixels: st.myPixels + picks.length, couponPct: 0 }; });
     flashIdx(picks[0]);
     if (theme.celebrate === 'confetti') window.fireConfetti(hostRef.current, theme);
-    const r = window.rollReward(); window.applyReward(set, r.resolved); set({ reward: r });
+    // original reveal style — surface the surprise in the "Open it" popup after paying
+    const r = info.reward || window.rollReward();
+    window.applyReward(set, r.resolved);
+    set({ reward: r });
   };
 
   // read latest store synchronously
@@ -239,6 +244,7 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
       {/* ── overlays ── */}
       <window.Toast theme={theme} toast={state.toast} />
       {state.reward && <window.RewardPopup theme={theme} payload={state.reward} onClose={() => set({ reward: null })} />}
+      {state.sheet === 'claim' && <window.ClaimBox theme={theme} state={state} set={set} onClose={() => set({ sheet: null, pendingBuy: null })} />}
       {state.sheet === 'payment' && <window.PaymentSheet theme={theme} state={state} set={set} toast={toast} onPaid={revealPaid} onClose={() => set({ sheet: null, pendingBuy: null })} />}
       {state.sheet === 'spin' && <window.DailySpinSheet theme={theme} state={state} set={set} toast={toast} onClose={() => set({ sheet: null })} />}
       {state.sheet === 'invite' && <window.InviteSheet theme={theme} state={state} set={set} toast={toast} onClose={() => set({ sheet: null })} />}
