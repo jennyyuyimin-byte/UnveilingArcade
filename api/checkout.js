@@ -45,8 +45,10 @@ module.exports = async (req, res) => {
       // stamp what was bought (and who bought it) onto the session so
       // /api/verify and the webhook can read it back
       metadata: { pack, credits: String(item.credits), kind: item.kind, pid },
-      success_url: `${origin}/?unveil_session={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/?unveil_cancel=1`,
+      // Checkout opens in a NEW TAB, so we return to a small confirmation page
+      // (which verifies + credits, then closes) rather than reloading the game.
+      success_url: `${origin}/paid.html?unveil_session={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/paid.html?unveil_cancel=1`,
     });
     res.status(200).json({ url: session.url });
   } catch (e) {

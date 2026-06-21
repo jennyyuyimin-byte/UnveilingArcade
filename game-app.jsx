@@ -14,27 +14,6 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
   // pixels, rewards, paid allowance) via a signed device cookie, then mirror
   // progression back up as the player plays. Degrades to localStorage-only if
   // the backend/KV isn't reachable.
-  React.useEffect(() => {
-    if (!window.GameSync) return;
-    (async () => {
-      const player = await window.GameSync.init(id, set);
-      // Deliver any allowance that was PAID but never revealed — e.g. the reveal
-      // call failed after payment, or the webhook credited it while the buyer
-      // had already closed the tab. Skip when we're mid Stripe-return (that flow
-      // reveals it) to avoid a double-reveal race.
-      const returningFromStripe = (() => {
-        try { return new URLSearchParams(window.location.search).has('unveil_session'); }
-        catch (e) { return false; }
-      })();
-      if (player && !returningFromStripe) {
-        const owed = (player.paidCredits || 0) - (player.paidRevealsUsed || 0);
-        if (owed > 0) {
-          const res = await window.GameSync.reveal(id, { mode: 'paid', n: owed, covered: coveredList(peekState()) });
-          if (res && res.ok) applyServerReveal(res, false);
-        }
-      }
-    })();
-  }, [id]);
   React.useEffect(() => { window.GameSync && window.GameSync.push(id, state); }, [state]);
 
   const { cols, rows, basePrice } = window.GAME;
@@ -156,6 +135,39 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
       set({ revealSummary: { count: picks.length, tally } });
     }
   };
+
+  // ── re-sync with the server and deliver paid-but-unrevealed pixels ──────────
+  // Runs on load and whenever the tab regains focus (e.g. after paying in the
+  // Stripe tab). Pulls the latest save, then reveals any owed allowance
+  // (paidCredits - paidRevealsUsed) the server credited. A ref guard serializes
+  // concurrent runs so the same credits aren't revealed twice.
+  const deliveringRef = React.useRef(false);
+  const syncAndDeliver = async (deliver = true) => {
+    if (!window.GameSync || deliveringRef.current) return;
+    deliveringRef.current = true;
+    try {
+      const player = await window.GameSync.init(id, set);
+      if (deliver && player) {
+        const owed = (player.paidCredits || 0) - (player.paidRevealsUsed || 0);
+        if (owed > 0) {
+          const res = await window.GameSync.reveal(id, { mode: 'paid', n: owed, covered: coveredList(peekState()) });
+          if (res && res.ok) { applyServerReveal(res, false); set({ sheet: null, pendingBuy: null }); }
+        }
+      }
+    } finally { deliveringRef.current = false; }
+  };
+  const syncRef = React.useRef(syncAndDeliver); syncRef.current = syncAndDeliver;
+  React.useEffect(() => {
+    // On mount, init + (unless we're mid in-game Stripe return, which the legacy
+    // effect handles) deliver any owed allowance.
+    const returning = (() => { try { return new URLSearchParams(window.location.search).has('unveil_session'); } catch (e) { return false; } })();
+    syncRef.current(!returning);
+    // Re-deliver when the player switches back to this tab after paying.
+    const onVis = () => { if (document.visibilityState === 'visible') syncRef.current(true); };
+    window.addEventListener('focus', onVis);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { window.removeEventListener('focus', onVis); document.removeEventListener('visibilitychange', onVis); };
+  }, [id]);
 
   // reveal N random covered pixels in one shot, applying + tallying each pixel's
   // surprise. Used by pixel-pack purchases so 6 / 12 packs unlock instantly
@@ -479,7 +491,7 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
       {state.sheet === 'restore' && <window.RestoreSheet theme={theme} set={set} toast={toast} onClose={() => set({ sheet: 'rewards' })} />}
       {state.sheet === 'wallpapers' && <window.WallpaperSheet theme={theme} state={state} onClose={() => set({ sheet: 'rewards' })} />}
       {state.sheet === 'raffle' && <window.RaffleSheet theme={theme} state={state} set={set} onClose={() => set({ sheet: 'rewards' })} />}
-      {state.sheet === 'payment' && <window.PaymentSheet theme={theme} state={state} set={set} toast={toast} onPaid={revealPaid} onClose={() => set({ sheet: null, pendingBuy: null })} />}
+      {state.sheet === 'payment' && <window.PaymentSheet theme={theme} state={state} set={set} toast={toast} onPaid={revealPaid} onSync={() => syncAndDeliver(true)} onClose={() => set({ sheet: null, pendingBuy: null })} />}
       {state.sheet === 'spin' && <window.DailySpinSheet theme={theme} state={state} set={set} toast={toast} onClose={() => set({ sheet: null })} />}
       {state.sheet === 'invite' && <window.InviteSheet theme={theme} state={state} set={set} toast={toast} onClose={() => set({ sheet: null })} />}
       {state.sheet === 'story' && <window.StorySheet theme={theme} state={state} onClose={() => set({ sheet: null })} />}

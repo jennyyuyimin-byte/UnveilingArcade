@@ -80,8 +80,8 @@ const server = http.createServer(async (req, res) => {
       const pid = ensurePid(req, res); // sets the device cookie
       const sid = 'demo_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
       fakeSessions.set(sid, { pid, credits: item.credits, kind: item.kind });
-      // jump straight back as if Stripe approved the payment
-      return res.status(200).json({ url: `/?unveil_session=${sid}` });
+      // jump to the confirmation page as if Stripe approved the payment
+      return res.status(200).json({ url: `/paid.html?unveil_session=${sid}` });
     }
 
     if (pathname === '/api/verify') {

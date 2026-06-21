@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>UNVEIL — Payment</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(120% 70% at 50% -10%, #FFE0CC 0%, #FFD0B5 45%, #F6B79A 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif; color: #2a1a10;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    background: #FFF4EC; border-radius: 26px; padding: 36px 28px; width: min(360px, 88vw);
+    text-align: center; box-shadow: 0 30px 70px rgba(120,50,10,.28);
+  }
+  .badge {
+    width: 84px; height: 84px; border-radius: 42px; margin: 0 auto 20px;
+    display: flex; align-items: center; justify-content: center;
+    background: #FF5A1F; color: #FFF4EC; font-size: 44px; line-height: 1;
+  }
+  .badge.muted { background: #E7DAD0; color: #8a7a6c; }
+  h1 { font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 26px; margin: 0 0 8px; }
+  p { font-size: 15px; line-height: 1.5; color: #6b5a4d; margin: 0 0 22px; }
+  button {
+    font-family: 'Fredoka', sans-serif; font-weight: 700; font-size: 16px; cursor: pointer;
+    border: none; border-radius: 14px; padding: 14px 20px; width: 100%;
+    background: #FF5A1F; color: #FFF4EC;
+  }
+  .spinner {
+    width: 40px; height: 40px; margin: 0 auto 20px; border-radius: 50%;
+    border: 4px solid #F0DFD3; border-top-color: #FF5A1F; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="spinner"></div>
+  <h1>Confirming…</h1>
+  <p>Just a moment.</p>
+</div>
+<script>
+  (async () => {
+    const card = document.getElementById('card');
+    const render = (icon, title, sub, muted) => {
+      card.innerHTML =
+        '<div class="badge' + (muted ? ' muted' : '') + '">' + icon + '</div>' +
+        '<h1>' + title + '</h1><p>' + sub + '</p>' +
+        '<button id="x">Back to the game</button>';
+      // If this is the Stripe tab (opened by the game) closing works; otherwise
+      // (popup-blocked same-tab fallback) navigate back to the game.
+      document.getElementById('x').onclick = () => {
+        try { window.close(); } catch (e) {}
+        setTimeout(() => { location.href = '/'; }, 120);
+      };
+    };
+    const qs = new URLSearchParams(location.search);
+    if (qs.get('unveil_cancel')) {
+      render('✕', 'Payment canceled', 'No charge was made. You can close this tab and return to the game.', true);
+      return;
+    }
+    const session = qs.get('unveil_session');
+    if (!session) { render('✓', 'All set', 'You can close this tab and return to the game.'); return; }
+    try {
+      // Verify + credit on the server BEFORE we leave, so the allowance is
+      // recorded even if this tab is closed immediately.
+      const v = await fetch('/api/verify?session=' + encodeURIComponent(session)).then((r) => r.json());
+      if (v && v.paid) {
+        render('✓', 'Payment complete', 'Your pixels are ready — switch back to the game tab to see them reveal. You can close this one.');
+      } else {
+        render('!', 'Payment not verified', 'If you were charged, return to the game and it will sort out shortly.', true);
+      }
+    } catch (e) {
+      render('✓', 'Payment received', 'Return to the game tab to see your pixels.');
+    }
+    // Try to auto-close shortly (works because this tab was opened by the game).
+    setTimeout(() => { try { window.close(); } catch (e) {} }, 2600);
+  })();
+</script>
+</body>
+</html>

@@ -190,14 +190,14 @@ function BundleSheet({ theme, state, set, onClose }) {
 }
 
 // ── express payment — pay $1/pixel right away (Apple Pay first, no cart) ──────
-function PaymentSheet({ theme, state, set, onClose, toast, onPaid }) {
+function PaymentSheet({ theme, state, set, onClose, toast, onPaid, onSync }) {
   const Icon = window.Icon;
   const buyInfo = state.pendingBuy || { count: 1, price: 1 };
   const isBundle = buyInfo.kind === 'bundle';
   const count = buyInfo.count || 1;
   const credits = buyInfo.credits || 0;
   const price = buyInfo.price != null ? buyInfo.price : count;
-  const [phase, setPhase] = React.useState('form'); // form | redirect | success
+  const [phase, setPhase] = React.useState('form'); // form | redirect | waiting | success
   const label = isBundle ? buyInfo.label || `${credits} pixels` : (count === 1 ? 'Reveal 1 pixel' : `Reveal ${count} pixels`);
 
   // Which server-side catalog entry to charge. Bundles carry their own packId;
@@ -206,27 +206,39 @@ function PaymentSheet({ theme, state, set, onClose, toast, onPaid }) {
     || (isBundle ? ({ 5: 'p5', 10: 'p12', 20: 'p25' })[price] : (price < 1 ? 'single_half' : 'single'));
 
   // Dynamic checkout: ask our Vercel /api/checkout function to build a Stripe
-  // Checkout Session for this pack (the SERVER sets the real price), then go
-  // there. If the backend isn't reachable — e.g. the in-app preview has no
-  // /api — fall back to the matching static Payment Link so the demo still runs.
+  // Checkout Session for this pack (the SERVER sets the real price), then open it
+  // in a NEW TAB so the player never loses their game. Payment is verified +
+  // credited on the confirmation page; this tab waits and auto-reveals on return.
+  // If the backend isn't reachable, fall back to the matching static Payment Link.
   const goToStripe = async () => {
-    if (phase === 'success' || phase === 'redirect') return;
+    if (phase === 'success' || phase === 'redirect' || phase === 'waiting') return;
     setPhase('redirect');
+    // Open the tab synchronously inside the click so the browser keeps the
+    // user-gesture and doesn't block the popup; we set its URL once we have it.
+    const tab = window.open('about:blank', '_blank');
+    const goTo = (url) => {
+      if (tab && !tab.closed) { tab.location = url; setPhase('waiting'); }
+      else { window.location.assign(url); } // popup blocked → same-tab fallback
+    };
     try {
       const r = await fetch('/api/checkout', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pack: packId }),
       });
       const data = await r.json();
-      if (data && data.url) { window.location.assign(data.url); return; }
+      if (data && data.url) { goTo(data.url); return; }
       throw new Error('no url');
     } catch (e) {
       const link = window.paymentLinkFor(price); // static-link fallback
-      if (link) { window.location.assign(link); return; }
+      if (link) { goTo(link); return; }
+      if (tab && !tab.closed) tab.close();
       setPhase('form');
       toast && toast('Could not start checkout');
     }
   };
+  // Called from the "waiting" screen (and on tab refocus by the game) to pull the
+  // freshly-credited allowance and reveal it.
+  const checkPayment = () => { if (onSync) onSync(); };
   // Demo affordance only — simulates the verified return without a real charge.
   const simulateReturn = () => {
     if (phase === 'success') return;
@@ -242,8 +254,20 @@ function PaymentSheet({ theme, state, set, onClose, toast, onPaid }) {
   const close = () => set({ sheet: null, pendingBuy: null });
 
   return (
-    <Sheet theme={theme} title={phase === 'success' ? '' : `Pay ${fmt$(price)}`} onClose={close}>
-      {phase === 'success' ? (
+    <Sheet theme={theme} title={phase === 'success' || phase === 'waiting' ? '' : `Pay ${fmt$(price)}`} onClose={close}>
+      {phase === 'waiting' ? (
+        <div style={{ textAlign: 'center', padding: '14px 6px 8px' }}>
+          <div className="ug-spin" style={{ width: 56, height: 56, margin: '6px auto 18px', borderRadius: '50%',
+            border: `4px solid ${theme.surfaceAlt}`, borderTopColor: theme.accent }} />
+          <div style={{ fontFamily: theme.fontDisplay, fontWeight: theme.displayWeight, fontSize: 24, marginBottom: 6 }}>Finish in the new tab</div>
+          <div style={{ color: theme.muted, fontFamily: theme.fontBody, fontSize: 14.5, lineHeight: 1.45, marginBottom: 20, padding: '0 6px' }}>
+            Complete your payment in the tab that just opened. Your pixels appear here automatically when you’re done.
+          </div>
+          <Btn theme={theme} size="lg" style={{ width: '100%' }} onClick={checkPayment}>I’ve completed payment</Btn>
+          <button onClick={close} style={{ display: 'block', margin: '12px auto 0', border: 'none', background: 'transparent',
+            cursor: 'pointer', color: theme.faint, fontFamily: theme.fontBody, fontWeight: 600, fontSize: 12.5 }}>Cancel</button>
+        </div>
+      ) : phase === 'success' ? (
         <div style={{ textAlign: 'center', padding: '14px 6px 8px' }}>
           <div style={{ width: 88, height: 88, borderRadius: 44, margin: '0 auto 18px', background: theme.accent, display: 'flex', alignItems: 'center', justifyContent: 'center',
             boxShadow: theme.accentGlow, animation: 'ug-pop .4s cubic-bezier(.2,.9,.3,1.3)' }}>
