@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>UNVEIL — Reveal the painting</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Fredoka:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; -webkit-font-smoothing: antialiased; }
+  body { background:
+      radial-gradient(120% 70% at 50% -10%, #FFE0CC 0%, #FFD0B5 45%, #F6B79A 100%);
+    display: flex; align-items: center; justify-content: center; }
+  #root, .shell-host { height: 100%; width: 100%; }
+  @keyframes ug-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes ug-rise { from { transform: translateY(40px); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
+  @keyframes ug-pop { 0% { transform: scale(.85); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+  @keyframes ug-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+  @keyframes ug-reveal { 0% { opacity: .9; transform: scale(1); } 100% { opacity: 0; transform: scale(1.15); } }
+  @keyframes ug-spin { to { transform: rotate(360deg); } }
+  .ug-spin { animation: ug-spin .7s linear infinite; }
+  ::-webkit-scrollbar { width: 0; height: 0; }
+
+  /* The phone shell. On large screens it's a centered device card;
+     on phones it goes edge-to-edge fullscreen. */
+  .shell {
+    position: relative; overflow: hidden; background: #FFF4EC;
+    width: 100%; height: 100%;
+  }
+  @media (min-width: 600px) {
+    body { padding: 24px; }
+    .shell {
+      width: min(420px, 96vw);
+      height: min(900px, calc(100vh - 48px));
+      border-radius: 44px;
+      box-shadow: 0 40px 90px rgba(120,50,10,.32), 0 0 0 11px #1c1410, 0 0 0 13px #34281f;
+    }
+  }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#FF5A1F"/>
+    <g fill="#FFF4EC">
+      <rect x="30" y="30" width="11" height="11" rx="2"/>
+      <rect x="44" y="30" width="11" height="11" rx="2"/>
+      <rect x="58" y="30" width="11" height="11" rx="2" opacity="0.45"/>
+      <rect x="30" y="44" width="11" height="11" rx="2" opacity="0.45"/>
+      <rect x="44" y="44" width="11" height="11" rx="2"/>
+      <rect x="58" y="44" width="11" height="11" rx="2"/>
+      <rect x="30" y="58" width="11" height="11" rx="2"/>
+      <rect x="44" y="58" width="11" height="11" rx="2" opacity="0.45"/>
+      <rect x="58" y="58" width="11" height="11" rx="2"/>
+    </g>
+  </svg>
+</template>
+
+<script type="text/babel" src="game-icons.jsx"></script>
+<script type="text/babel" src="game-engine.jsx"></script>
+<script type="text/babel" src="game-sync.jsx"></script>
+<script type="text/babel" src="game-actions.jsx"></script>
+<script type="text/babel" src="game-sheets.jsx"></script>
+<script type="text/babel" src="game-app.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+  function App() {
+    return (
+      <div className="shell-host" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="shell">
+          <window.GameApp themeId="arcade" instanceId="arcade-public" />
+        </div>
+      </div>
+    );
+  }
+  function mount() {
+    if (!(window.GameApp)) { setTimeout(mount, 40); return; }
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  }
+  mount();
+</script>
+</body>
+</html>
