@@ -14,7 +14,27 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
   // pixels, rewards, paid allowance) via a signed device cookie, then mirror
   // progression back up as the player plays. Degrades to localStorage-only if
   // the backend/KV isn't reachable.
-  React.useEffect(() => { window.GameSync && window.GameSync.init(id, set); }, [id]);
+  React.useEffect(() => {
+    if (!window.GameSync) return;
+    (async () => {
+      const player = await window.GameSync.init(id, set);
+      // Deliver any allowance that was PAID but never revealed — e.g. the reveal
+      // call failed after payment, or the webhook credited it while the buyer
+      // had already closed the tab. Skip when we're mid Stripe-return (that flow
+      // reveals it) to avoid a double-reveal race.
+      const returningFromStripe = (() => {
+        try { return new URLSearchParams(window.location.search).has('unveil_session'); }
+        catch (e) { return false; }
+      })();
+      if (player && !returningFromStripe) {
+        const owed = (player.paidCredits || 0) - (player.paidRevealsUsed || 0);
+        if (owed > 0) {
+          const res = await window.GameSync.reveal(id, { mode: 'paid', n: owed, covered: coveredList(peekState()) });
+          if (res && res.ok) applyServerReveal(res, false);
+        }
+      }
+    })();
+  }, [id]);
   React.useEffect(() => { window.GameSync && window.GameSync.push(id, state); }, [state]);
 
   const { cols, rows, basePrice } = window.GAME;

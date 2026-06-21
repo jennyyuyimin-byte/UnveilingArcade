@@ -51,9 +51,11 @@ function _mergeServerIntoLocal(set, player) {
   });
 }
 
-// Pull the durable save for this device and merge it in. Resolves to true if a
-// server store is actually backing the player (so we know whether to push).
+// Pull the durable save for this device and merge it in. Returns the server
+// player record (or null if there's no backend) so the caller can reconcile any
+// paid-but-not-yet-revealed allowance.
 async function init(id, set) {
+  let player = null;
   try {
     await fetch('/api/session', { method: 'GET' }); // ensure pid cookie exists
     const r = await fetch('/api/state', { method: 'GET' });
@@ -61,13 +63,14 @@ async function init(id, set) {
     const data = await r.json();
     _SYNC.persisted[id] = Boolean(data && data.persisted);
     if (data && data.persisted && data.player) {
-      _mergeServerIntoLocal(set, data.player);
+      player = data.player;
+      _mergeServerIntoLocal(set, player);
     }
   } catch (e) {
     _SYNC.persisted[id] = false; // no backend — stay local-only
   }
   _SYNC.ready[id] = true;
-  return _SYNC.persisted[id];
+  return player;
 }
 
 // Push progression up (debounced). Never sends paidCredits/creditedSessions —
