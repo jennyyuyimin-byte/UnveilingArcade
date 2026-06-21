@@ -13,17 +13,38 @@ function randomCovered(state) {
 }
 
 // apply a resolved reward type to the store (called after a buy / spin / open)
+function makeRaffleCode() {
+  const a = Math.random().toString(36).slice(2, 6).toUpperCase();
+  const b = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `HL-${a}-${b}`;
+}
 function applyReward(set, resolved) {
   set((s) => {
     const n = { ...s };
     if (resolved === 'coupon') n.couponPct = 0.5;
     else if (resolved === 'bonus') n.freePixels = s.freePixels + 1;
     else if (resolved === 'wallpaper') n.wallpapers = s.wallpapers + 1;
-    else if (resolved === 'raffle') n.raffles = s.raffles + 1;
-    else if (resolved === 'jackpot') n.freePixels = s.freePixels + 10;
+    else if (resolved === 'raffle') { n.raffles = s.raffles + 1; n.raffleCodes = [...(s.raffleCodes || []), makeRaffleCode()]; }
+    else if (resolved === 'jackpot') { n.freePixels = s.freePixels + 10; n.jackpots = s.jackpots + 1; }
     return n;
   });
 }
+
+// ── reward catalog metadata (the payoff screens read these) ──────────────────
+const RAFFLE = {
+  prize: 'A signed, museum-grade physical print of “Holding Light”',
+  detail: '24 × 32 in giclée on archival cotton rag, hand-signed and numbered by the artist. Shipped framed, anywhere.',
+  drawDate: 'August 31, 2026',
+  communityEntries: 3120, // entries already in the pot from everyone
+};
+
+// Wallpaper variants unlock as you earn more “wallpaper” rewards.
+// Each is a differently-framed crop of the same painting, sized for a phone.
+const WALLPAPER_VARIANTS = [
+  { id: 'full',   label: 'Full painting', fx: 0.5, fy: 0.5,  zoom: 1.0 },
+  { id: 'figure', label: 'The figure',    fx: 0.5, fy: 0.2,  zoom: 1.6 },
+  { id: 'light',  label: 'Holding Light', fx: 0.5, fy: 0.74, zoom: 1.8 },
+];
 
 // Daily spin wheel segments (8). Mostly small wins.
 const SPIN_SEGMENTS = [
@@ -48,4 +69,4 @@ const LEADERBOARD = [
   { name: 'qiqi___', px: 19 },
 ];
 
-Object.assign(window, { percentRevealed, randomCovered, applyReward, SPIN_SEGMENTS, LEADERBOARD });
+Object.assign(window, { percentRevealed, randomCovered, applyReward, makeRaffleCode, RAFFLE, WALLPAPER_VARIANTS, SPIN_SEGMENTS, LEADERBOARD });

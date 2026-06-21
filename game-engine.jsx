@@ -6,12 +6,12 @@
 // The painting / experience copy. Grounded in the artist's note — edit freely.
 const NARRATIVE = {
   brand: 'UNVEIL',
-  piece: 'Enter',
+  piece: 'Holding Light',
   artist: 'the artist',
   // shown on the story sheet
   story: [
     "I crossed an ocean to get here.",
-    "“Enter” is the painting I made about that crossing — a small figure standing on a wired-up world, reaching for a light that hadn’t arrived yet. Somewhere between two countries, I used paint to figure out who I was becoming.",
+    "“Holding Light” is the painting I made about that crossing — a small figure standing on a wired-up world, reaching for a light that hadn’t arrived yet. Somewhere between two countries, I used paint to figure out who I was becoming.",
     "So I hid it. One pixel at a time.",
     "Every pixel you reveal uncovers a fragment of that journey — and drops a little something in your pocket too. When the final pixel turns, the whole picture belongs to everyone who helped uncover it.",
   ],
@@ -41,7 +41,7 @@ const REWARD_META = {
   coupon:   { icon: 'tag',   title: 'Coupon unlocked', line: '50% off your next pixel', tier: 'small' },
   bonus:    { icon: 'plus',  title: 'Free pixel!',     line: '+1 reveal on the house',  tier: 'small' },
   flavor:   { icon: 'spark', title: 'Nice reveal',     line: 'A little more comes into view', tier: 'small' },
-  wallpaper:{ icon: 'image', title: 'Wallpaper unlocked', line: 'A digital piece of “Enter” for your phone', tier: 'mid' },
+  wallpaper:{ icon: 'image', title: 'Wallpaper unlocked', line: 'A digital piece of “Holding Light” for your phone', tier: 'mid' },
   mystery:  { icon: 'gift',  title: 'Mystery box',     line: 'Tap to open…',            tier: 'mid' },
   raffle:   { icon: 'frame', title: 'Print raffle entry', line: 'Entered to win a signed physical print', tier: 'big' },
   jackpot:  { icon: 'crown', title: 'GOLDEN PIXEL',    line: '+10 free pixels — jackpot!', tier: 'big' },
@@ -82,20 +82,41 @@ function makeInitialState() {
     couponPct: 0,            // 0 or 0.5 — discount on next paid pixel
     wallpapers: 0,
     raffles: 0,
+    raffleCodes: [],        // entry codes for the signed-print raffle
     jackpots: 0,
+    paidSessions: [],       // Stripe checkout sessions already credited (anti-replay)
     streak: 0,
     dailyUsed: false,
     sheet: null,             // open sheet id
     reward: null,            // active reward popup payload
+    revealSummary: null,     // batch-reveal recap popup payload
     toast: null,
     flash: null,             // index just revealed (for animation)
     invited: false,
     completed: false,
   };
 }
+// ── persistence — survive a full page reload (needed for the Stripe round-trip)
+const STORE_KEY = (id) => 'unveil:state:' + id;
+function loadState(id) {
+  try {
+    const raw = localStorage.getItem(STORE_KEY(id));
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    // merge over a fresh state so new fields always exist; drop transient UI
+    return { ...makeInitialState(), ...saved, toast: null, flash: null, reward: null, revealSummary: null, sheet: null };
+  } catch (e) { return null; }
+}
+function persistState(id, state) {
+  try {
+    const { toast, flash, reward, revealSummary, ...rest } = state;
+    localStorage.setItem(STORE_KEY(id), JSON.stringify(rest));
+  } catch (e) {}
+}
+
 function useGameStore(id) {
   const ref = React.useRef(null);
-  if (ref.current === null) { if (!_stores[id]) _stores[id] = makeInitialState(); ref.current = id; }
+  if (ref.current === null) { if (!_stores[id]) _stores[id] = loadState(id) || makeInitialState(); ref.current = id; }
   const [, force] = React.useReducer((x) => x + 1, 0);
   React.useEffect(() => {
     (_subs[id] = _subs[id] || []).push(force);
@@ -104,6 +125,7 @@ function useGameStore(id) {
   const set = React.useCallback((updater) => {
     const cur = _stores[id];
     _stores[id] = typeof updater === 'function' ? updater(cur) : { ...cur, ...updater };
+    persistState(id, _stores[id]);
     (_subs[id] || []).forEach((f) => f());
   }, [id]);
   return [_stores[id], set];

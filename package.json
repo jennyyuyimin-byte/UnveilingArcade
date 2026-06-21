@@ -1,0 +1,8 @@
+{
+  "name": "unveiling-arcade",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "stripe": "^16.12.0"
+  }
+}

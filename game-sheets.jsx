@@ -110,45 +110,136 @@ function ClaimBox({ theme, state, set, onClose }) {
   );
 }
 
+// ── pixel packs — buy credits in one payment (bundles cover the card fees) ────
+// Stripe Payment Links. One link = one fixed price in Stripe, so paste a
+// separate link per price as you create them. `default` is used as a fallback.
+const PAYMENT_LINKS = {
+  default: 'https://buy.stripe.com/5kQdR9gEl9tagHU4gu43S00',
+  0.5: 'https://buy.stripe.com/8x2aEX73L48Q77k14i43S03', // half pixel ($0.50)
+  1:  'https://buy.stripe.com/5kQdR9gEl9tagHU4gu43S00', // single pixel ($1)
+  5:  'https://buy.stripe.com/fZu7sL87P7l29fscN043S01', // 6-pixel pack ($5)
+  10: 'https://buy.stripe.com/eVqcN587PbBiezM9AO43S02', // 14-pixel pack ($10)
+  20: '', // 30-pixel pack ($20)
+};
+const paymentLinkFor = (price) => PAYMENT_LINKS[price] || PAYMENT_LINKS.default;
+
+const PIXEL_PACKS = [
+  { id: 'p5',  pixels: 5,  bonus: 1, price: 5,  tag: null,            sub: '+1 bonus pixel' },
+  { id: 'p12', pixels: 12, bonus: 2, price: 10, tag: 'Most popular',  sub: '+2 bonus pixels' },
+  { id: 'p25', pixels: 25, bonus: 5, price: 20, tag: 'Best value',    sub: '+5 bonus pixels' },
+];
+
+function BundleSheet({ theme, state, set, onClose }) {
+  const Icon = window.Icon;
+
+  const choose = (p) => {
+    const credits = p.pixels + p.bonus;
+    set({ sheet: 'payment', pendingBuy: {
+      kind: 'bundle', packId: p.id, credits, price: p.price,
+      label: `${credits} pixels`,
+      sub: `${p.pixels} + ${p.bonus} bonus · pack`,
+    } });
+  };
+
+  return (
+    <Sheet theme={theme} title="Get more pixels" onClose={onClose}>
+      <div style={{ color: theme.muted, fontFamily: theme.fontBody, fontSize: 14, lineHeight: 1.45, marginBottom: 16 }}>
+        Buy a pack once, then tap any square to reveal — no charge per tap. Bundles include bonus pixels and cover the card processing fees.
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+        {PIXEL_PACKS.map((p) => {
+          const total = p.pixels + p.bonus;
+          const featured = p.tag === 'Most popular';
+          const per = (p.price / total);
+          return (
+            <button key={p.id} onClick={() => choose(p)} style={{ position: 'relative', width: '100%', textAlign: 'left', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 14, padding: '15px 16px', borderRadius: 16,
+              background: featured ? theme.surfaceAlt : theme.surface,
+              border: `${featured ? 2 : 1}px solid ${featured ? theme.accent : theme.line}`,
+              color: theme.text, WebkitTapHighlightColor: 'transparent' }}>
+              <div style={{ width: 48, height: 48, borderRadius: 13, flexShrink: 0, background: featured ? theme.accent : theme.surfaceAlt,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: featured ? theme.accentGlow : 'none' }}>
+                <Icon name="grid" size={24} color={featured ? theme.accentText : theme.accent} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+                  <span style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 19 }}>{total} pixels</span>
+                  {p.bonus > 0 && <span style={{ fontFamily: theme.fontBody, fontWeight: 700, fontSize: 12.5, color: theme.accent }}>+{p.bonus} free</span>}
+                </div>
+                <div style={{ fontFamily: theme.fontBody, fontSize: 12.5, color: theme.muted, marginTop: 2 }}>{fmt$(per)} per pixel</div>
+              </div>
+              <div style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 22 }}>{fmt$(p.price)}</div>
+              {p.tag && (
+                <span style={{ position: 'absolute', top: -9, right: 16, background: featured ? theme.accent : theme.text,
+                  color: featured ? theme.accentText : theme.bg, fontFamily: theme.fontBody, fontWeight: 800, fontSize: 10,
+                  letterSpacing: '.06em', textTransform: 'uppercase', padding: '3px 9px', borderRadius: 8 }}>{p.tag}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, padding: '11px 14px', borderRadius: 12,
+        background: theme.surfaceAlt, color: theme.muted }}>
+        <Icon name="bolt" size={16} color={theme.accent} />
+        <span style={{ fontFamily: theme.fontBody, fontSize: 12.5, lineHeight: 1.4 }}>Prefer just one? Tap any square to reveal a single pixel for $1.</span>
+      </div>
+    </Sheet>
+  );
+}
+
 // ── express payment — pay $1/pixel right away (Apple Pay first, no cart) ──────
 function PaymentSheet({ theme, state, set, onClose, toast, onPaid }) {
   const Icon = window.Icon;
   const buyInfo = state.pendingBuy || { count: 1, price: 1 };
+  const isBundle = buyInfo.kind === 'bundle';
   const count = buyInfo.count || 1;
+  const credits = buyInfo.credits || 0;
   const price = buyInfo.price != null ? buyInfo.price : count;
-  const [phase, setPhase] = React.useState('form'); // form | processing | success
-  const [num, setNum] = React.useState('');
-  const [exp, setExp] = React.useState('');
-  const [cvc, setCvc] = React.useState('');
+  const [phase, setPhase] = React.useState('form'); // form | redirect | success
+  const label = isBundle ? buyInfo.label || `${credits} pixels` : (count === 1 ? 'Reveal 1 pixel' : `Reveal ${count} pixels`);
 
-  const fmtNum = (v) => v.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim();
-  const fmtExp = (v) => { const d = v.replace(/\D/g, '').slice(0, 4); return d.length > 2 ? d.slice(0, 2) + '/' + d.slice(2) : d; };
-  const valid = num.replace(/\s/g, '').length >= 15 && exp.length === 5 && cvc.length >= 3;
-  const label = count === 1 ? 'Reveal 1 pixel' : `Reveal ${count} pixels`;
+  // Which server-side catalog entry to charge. Bundles carry their own packId;
+  // a single pixel is full price ($1) or the coupon half-price ($0.50).
+  const packId = buyInfo.packId
+    || (isBundle ? ({ 5: 'p5', 10: 'p12', 20: 'p25' })[price] : (price < 1 ? 'single_half' : 'single'));
 
-  const finish = () => {
-    if (phase !== 'form') return;
-    setPhase('processing');
+  // Dynamic checkout: ask our Vercel /api/checkout function to build a Stripe
+  // Checkout Session for this pack (the SERVER sets the real price), then go
+  // there. If the backend isn't reachable — e.g. the in-app preview has no
+  // /api — fall back to the matching static Payment Link so the demo still runs.
+  const goToStripe = async () => {
+    if (phase === 'success' || phase === 'redirect') return;
+    setPhase('redirect');
+    try {
+      const r = await fetch('/api/checkout', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pack: packId }),
+      });
+      const data = await r.json();
+      if (data && data.url) { window.location.assign(data.url); return; }
+      throw new Error('no url');
+    } catch (e) {
+      const link = window.paymentLinkFor(price); // static-link fallback
+      if (link) { window.location.assign(link); return; }
+      setPhase('form');
+      toast && toast('Could not start checkout');
+    }
+  };
+  // Demo affordance only — simulates the verified return without a real charge.
+  const simulateReturn = () => {
+    if (phase === 'success') return;
+    setPhase('success');
+    const fakeSession = 'demo_' + Date.now();
     setTimeout(() => {
-      setPhase('success');
-      setTimeout(() => {
-        onPaid && onPaid(buyInfo);
-        set({ sheet: null, pendingBuy: null });
-      }, 950);
-    }, 1300);
+      set((st) => ({ ...st, paidSessions: [...(st.paidSessions || []), fakeSession] }));
+      onPaid && onPaid(buyInfo);
+      set({ sheet: null, pendingBuy: null });
+    }, 950);
   };
 
   const close = () => set({ sheet: null, pendingBuy: null });
-
-  const field = (val, setter, placeholder, opts = {}) => (
-    <input value={val} onChange={(e) => setter((opts.fmt || ((x) => x))(e.target.value))}
-      inputMode={opts.inputMode || 'text'} placeholder={placeholder}
-      style={{ width: '100%', boxSizing: 'border-box', background: theme.surfaceAlt, border: `1.5px solid ${theme.line}`,
-        borderRadius: 12, padding: '13px 14px', color: theme.text, fontFamily: theme.fontBody, fontWeight: 600, fontSize: 15.5,
-        outline: 'none', letterSpacing: opts.spaced ? '.06em' : 0, ...(opts.style || {}) }}
-      onFocus={(e) => (e.target.style.borderColor = theme.accent)}
-      onBlur={(e) => (e.target.style.borderColor = theme.line)} />
-  );
 
   return (
     <Sheet theme={theme} title={phase === 'success' ? '' : `Pay ${fmt$(price)}`} onClose={close}>
@@ -159,7 +250,7 @@ function PaymentSheet({ theme, state, set, onClose, toast, onPaid }) {
             <Icon name="check" size={46} color={theme.accentText} sw={2.4} />
           </div>
           <div style={{ fontFamily: theme.fontDisplay, fontWeight: theme.displayWeight, fontSize: 26, marginBottom: 6 }}>Payment complete</div>
-          <div style={{ color: theme.muted, fontFamily: theme.fontBody, fontSize: 15 }}>Revealing {count} pixel{count === 1 ? '' : 's'}…</div>
+          <div style={{ color: theme.muted, fontFamily: theme.fontBody, fontSize: 15 }}>{isBundle ? `Adding ${credits} pixels…` : `Revealing ${count} pixel${count === 1 ? '' : 's'}…`}</div>
         </div>
       ) : (
         <>
@@ -170,48 +261,48 @@ function PaymentSheet({ theme, state, set, onClose, toast, onPaid }) {
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 16 }}>{label}</div>
-              <div style={{ fontFamily: theme.fontBody, fontSize: 13, color: theme.muted }}>“{window.NARRATIVE.piece}” · $1 each</div>
+              <div style={{ fontFamily: theme.fontBody, fontSize: 13, color: theme.muted }}>{isBundle ? buyInfo.sub || 'Pixel pack' : `“${window.NARRATIVE.piece}” · $1 each`}</div>
             </div>
             <div style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 22 }}>{fmt$(price)}</div>
           </div>
 
-          {/* express pay — the immediate primary action */}
-          <button onClick={finish} disabled={phase === 'processing'} style={{ width: '100%', height: 52, borderRadius: 13, border: 'none', cursor: 'pointer',
-            background: '#000', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, marginBottom: 10, WebkitTapHighlightColor: 'transparent' }}>
-            {phase === 'processing'
-              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, fontFamily: 'system-ui, sans-serif', fontWeight: 600, fontSize: 16 }}><span className="ug-spin" style={{ width: 18, height: 18, borderRadius: 9, border: '2.4px solid #fff', borderTopColor: 'transparent', display: 'inline-block' }} />Paying…</span>
-              : <><Icon name="apple" size={22} color="#fff" /><span style={{ fontFamily: 'system-ui, sans-serif', fontWeight: 600, fontSize: 18 }}>Pay</span></>}
-          </button>
-          <button onClick={finish} disabled={phase === 'processing'} style={{ width: '100%', height: 52, borderRadius: 13, cursor: 'pointer',
-            background: '#fff', color: '#3c4043', border: '1px solid #dadce0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 16, WebkitTapHighlightColor: 'transparent' }}>
-            <Icon name="google" size={20} /><span style={{ fontFamily: 'system-ui, sans-serif', fontWeight: 600, fontSize: 16 }}>Pay</span>
-          </button>
+          {/* upsell — switch a single $1 buy into a value pack right here */}
+          {!isBundle && count === 1 && (() => {
+            const p = window.PIXEL_PACKS[0]; const total = p.pixels + p.bonus;
+            const switchToPack = () => set({ pendingBuy: { kind: 'bundle', packId: p.id, credits: total, price: p.price, label: `${total} pixels`, sub: `${p.pixels} + ${p.bonus} bonus · pack` } });
+            return (
+              <button onClick={switchToPack} style={{ width: '100%', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12,
+                background: theme.surface, border: `1.5px solid ${theme.accent}`, borderRadius: 14, padding: '12px 14px', marginBottom: 18, color: theme.text, WebkitTapHighlightColor: 'transparent' }}>
+                <div style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: theme.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: theme.accentGlow }}>
+                  <Icon name="grid" size={20} color={theme.accentText} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: theme.fontBody, fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', color: theme.accent, fontWeight: 800 }}>Better value</div>
+                  <div style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 15.5, lineHeight: 1.15 }}>Get {total} pixels for {fmt$(p.price)}</div>
+                  <div style={{ fontFamily: theme.fontBody, fontSize: 12, color: theme.muted }}>That's {fmt$(p.price / total)} each — {Math.round((1 - p.price / total) * 100)}% off · +{p.bonus} free</div>
+                </div>
+                <Icon name="arrow" size={20} color={theme.accent} />
+              </button>
+            );
+          })()}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '0 0 16px', color: theme.faint }}>
-            <div style={{ flex: 1, height: 1, background: theme.line }} />
-            <div style={{ fontFamily: theme.fontBody, fontSize: 12, fontWeight: 600 }}>or pay with card</div>
-            <div style={{ flex: 1, height: 1, background: theme.line }} />
-          </div>
+          {/* downsell — let bundle buyers drop back to a single pixel */}
+          {isBundle && (
+            <button onClick={() => set({ pendingBuy: { kind: 'single', packId: 'single', count: 1, price: 1, reward: window.rollReward() } })} style={{ width: '100%', border: 'none', background: 'transparent', cursor: 'pointer',
+              color: theme.faint, fontFamily: theme.fontBody, fontWeight: 600, fontSize: 12.5, marginBottom: 16, WebkitTapHighlightColor: 'transparent' }}>
+              ← Just one pixel for $1 instead
+            </button>
+          )}
 
-          {/* card form */}
-          <div style={{ position: 'relative', marginBottom: 12 }}>
-            {field(num, setNum, 'Card number', { inputMode: 'numeric', fmt: fmtNum, spaced: true })}
-            <span style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)' }}><Icon name="card" size={22} color={theme.faint} /></span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
-            {field(exp, setExp, 'MM/YY', { inputMode: 'numeric', fmt: fmtExp })}
-            {field(cvc, setCvc, 'CVC', { inputMode: 'numeric', fmt: (v) => v.replace(/\D/g, '').slice(0, 4) })}
-          </div>
-
-          <Btn theme={theme} size="lg" style={{ width: '100%' }} disabled={!valid || phase === 'processing'} onClick={finish}>
-            {phase === 'processing'
-              ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}><span className="ug-spin" style={{ width: 18, height: 18, borderRadius: 9, border: `2.4px solid ${theme.accentText}`, borderTopColor: 'transparent', display: 'inline-block' }} />Processing…</span>
-              : `Pay ${fmt$(price)}`}
+          {/* secure checkout via Stripe — same-tab redirect, verified on return */}
+          <Btn theme={theme} size="lg" style={{ width: '100%' }} onClick={goToStripe} disabled={phase === 'redirect'}>
+            {phase === 'redirect' ? 'Starting secure checkout…' : `Pay ${fmt$(price)} securely`}
           </Btn>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 14, color: theme.faint }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 14, color: theme.faint }}>
             <Icon name="lock" size={14} color={theme.faint} />
-            <span style={{ fontFamily: theme.fontBody, fontSize: 11.5 }}>Prototype — no real charge is made.</span>
+            <span style={{ fontFamily: theme.fontBody, fontSize: 11.5 }}>Secure checkout by Stripe · pixels unlock only after a verified return</span>
           </div>
+          <button onClick={simulateReturn} style={{ display: 'block', margin: '12px auto 0', border: 'none', background: 'transparent', cursor: 'pointer', color: theme.faint, fontFamily: theme.fontBody, fontWeight: 600, fontSize: 11.5, opacity: .8 }}>Demo: simulate a verified return</button>
         </>
       )}
     </Sheet>
@@ -418,4 +509,234 @@ function CompletionOverlay({ theme, state, set, onClose, hostRef }) {
   );
 }
 
-Object.assign(window, { MiniReveal, RewardPopup, ClaimBox, PaymentSheet, DailySpinSheet, InviteSheet, StorySheet, LeaderboardSheet, ShareSheet, CompletionOverlay });
+// ── rewards hub — everything you've collected in one place ───────────────────
+function RewardsSheet({ theme, state, set, onClose }) {
+  const Icon = window.Icon;
+  const rows = [
+    { icon: 'gift',  label: 'Free pixels',    value: state.freePixels, sub: 'Tap any square to spend them — no charge' },
+    { icon: 'tag',   label: 'Coupon',         value: state.couponPct ? '50% off' : '—', sub: state.couponPct ? 'Applies to your next paid pixel' : 'Win one from a reveal or the daily spin' },
+    { icon: 'image', label: 'Wallpapers',     value: state.wallpapers, sub: 'Save the artwork to your phone', go: 'wallpapers' },
+    { icon: 'frame', label: 'Raffle entries', value: state.raffles,    sub: 'In the draw for a signed physical print', go: 'raffle' },
+    { icon: 'crown', label: 'Golden pixels',  value: state.jackpots,   sub: 'Jackpot reveals you\u2019ve hit' },
+  ];
+  return (
+    <Sheet theme={theme} title="Your rewards" onClose={onClose}>
+      <div style={{ color: theme.muted, fontFamily: theme.fontBody, fontSize: 14, lineHeight: 1.45, marginBottom: 16 }}>
+        Everything you\u2019ve unlocked by revealing pixels, spinning and inviting friends.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {rows.map((r) => {
+          const interactive = !!r.go;
+          const inner = (
+            <>
+              <div style={{ width: 46, height: 46, borderRadius: 13, flexShrink: 0, background: theme.surfaceAlt,
+                display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name={r.icon} size={24} color={theme.accent} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 16 }}>{r.label}</div>
+                <div style={{ fontFamily: theme.fontBody, fontSize: 12.5, color: theme.muted, marginTop: 2 }}>{r.sub}</div>
+              </div>
+              <div style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 22 }}>{r.value}</div>
+              {interactive && <Icon name="arrow" size={20} color={theme.accent} />}
+            </>
+          );
+          const baseStyle = { display: 'flex', alignItems: 'center', gap: 13, padding: '14px 15px', borderRadius: 16,
+            background: theme.surface, border: `1px solid ${theme.line}`, color: theme.text, textAlign: 'left', width: '100%' };
+          return interactive ? (
+            <button key={r.label} onClick={() => set({ sheet: r.go })} style={{ ...baseStyle, cursor: 'pointer', WebkitTapHighlightColor: 'transparent' }}>{inner}</button>
+          ) : (
+            <div key={r.label} style={baseStyle}>{inner}</div>
+          );
+        })}
+      </div>
+    </Sheet>
+  );
+}
+
+// ── wallpapers — view & actually download the art, sized for a phone ─────────
+function WallpaperSheet({ theme, state, onClose }) {
+  const Icon = window.Icon;
+  const variants = window.WALLPAPER_VARIANTS;
+  const unlocked = Math.min(state.wallpapers, variants.length);
+  const [saving, setSaving] = React.useState(null);
+
+  const downloadWallpaper = (v) => {
+    setSaving(v.id);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const W = 1179, H = 2556; // iPhone-ish portrait
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const scale = Math.max(W / img.width, H / img.height) * (v.zoom || 1);
+      const dw = img.width * scale, dh = img.height * scale;
+      ctx.drawImage(img, (W - dw) * (v.fx ?? 0.5), (H - dh) * (v.fy ?? 0.5), dw, dh);
+      // subtle bottom wordmark
+      const g = ctx.createLinearGradient(0, H - 360, 0, H);
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.55)');
+      ctx.fillStyle = g; ctx.fillRect(0, H - 360, W, 360);
+      ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.textAlign = 'center';
+      ctx.font = '600 64px Fredoka, system-ui, sans-serif';
+      ctx.fillText('\u201cHolding Light\u201d', W / 2, H - 150);
+      ctx.font = '500 38px Fredoka, system-ui, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.7)';
+      ctx.fillText('UNVEIL', W / 2, H - 92);
+      c.toBlob((blob) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `holding-light-${v.id}.png`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+        setSaving(null);
+      }, 'image/png');
+    };
+    img.onerror = () => setSaving(null);
+    img.src = theme.painting;
+  };
+
+  return (
+    <Sheet theme={theme} title="Wallpapers" onClose={onClose}>
+      <div style={{ color: theme.muted, fontFamily: theme.fontBody, fontSize: 14, lineHeight: 1.45, marginBottom: 16 }}>
+        {unlocked > 0
+          ? `You\u2019ve unlocked ${unlocked} of ${variants.length} framings of \u201cHolding Light.\u201d Save any to your phone.`
+          : 'Reveal a \u201cWallpaper\u201d reward to unlock a digital piece of the painting for your phone.'}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+        {variants.map((v, i) => {
+          const isUnlocked = i < unlocked;
+          return (
+            <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ position: 'relative', width: '100%', aspectRatio: '9 / 19.5', borderRadius: 14, overflow: 'hidden',
+                backgroundImage: `url(${theme.painting})`, backgroundSize: 'cover',
+                backgroundPosition: `${(v.fx ?? 0.5) * 100}% ${(v.fy ?? 0.5) * 100}%`,
+                border: `1px solid ${theme.line}`, boxShadow: '0 8px 22px rgba(0,0,0,.3)',
+                filter: isUnlocked ? 'none' : 'grayscale(.7) brightness(.55)' }}>
+                {!isUnlocked && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Icon name="lock" size={22} color="#fff" />
+                  </div>
+                )}
+              </div>
+              <div style={{ fontFamily: theme.fontBody, fontSize: 11.5, fontWeight: 700, color: theme.text, textAlign: 'center' }}>{v.label}</div>
+              {isUnlocked ? (
+                <button onClick={() => downloadWallpaper(v)} disabled={saving === v.id} style={{ border: 'none', cursor: 'pointer',
+                  background: theme.accent, color: theme.accentText, fontFamily: theme.fontBody, fontWeight: 700, fontSize: 12,
+                  padding: '8px 0', borderRadius: 10, WebkitTapHighlightColor: 'transparent' }}>
+                  {saving === v.id ? 'Saving…' : 'Save'}
+                </button>
+              ) : (
+                <div style={{ fontFamily: theme.fontBody, fontSize: 10.5, color: theme.faint, textAlign: 'center', padding: '6px 0' }}>Locked</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Sheet>
+  );
+}
+
+// ── raffle — the signed-print draw, your entries & live odds ─────────────────
+function RaffleSheet({ theme, state, set, onClose }) {
+  const Icon = window.Icon;
+  const R = window.RAFFLE;
+  const mine = state.raffles || 0;
+  const codes = state.raffleCodes || [];
+  const totalPot = R.communityEntries + mine;
+  const oddsPct = mine > 0 ? (mine / totalPot) * 100 : 0;
+  const oddsLabel = mine > 0 ? (oddsPct >= 0.1 ? `${oddsPct.toFixed(1)}%` : '<0.1%') : '—';
+
+  return (
+    <Sheet theme={theme} title="Print raffle" onClose={onClose}>
+      {/* prize hero */}
+      <div style={{ borderRadius: 18, overflow: 'hidden', border: `1px solid ${theme.line}`, marginBottom: 16, background: theme.surfaceAlt }}>
+        <div style={{ display: 'flex', gap: 14, padding: 16 }}>
+          <MiniReveal theme={theme} state={state} width={84} showCover={false} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: theme.fontBody, fontSize: 10.5, letterSpacing: '.14em', textTransform: 'uppercase', color: theme.accent, fontWeight: 800, marginBottom: 4 }}>The prize</div>
+            <div style={{ fontFamily: theme.fontDisplay, fontWeight: theme.displayWeight, fontSize: 18, lineHeight: 1.2 }}>{R.prize}</div>
+            <div style={{ fontFamily: theme.fontBody, fontSize: 12.5, color: theme.muted, lineHeight: 1.45, marginTop: 6 }}>{R.detail}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* your standing */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+        {[['Your entries', mine], ['Win odds', oddsLabel], ['Total in pot', totalPot.toLocaleString()]].map(([k, v]) => (
+          <div key={k} style={{ flex: 1, background: theme.surface, borderRadius: 14, padding: '13px 12px', border: `1px solid ${theme.line}` }}>
+            <div style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 22, lineHeight: 1 }}>{v}</div>
+            <div style={{ fontFamily: theme.fontBody, fontSize: 11, color: theme.muted, marginTop: 4 }}>{k}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px', borderRadius: 12, background: theme.surfaceAlt, color: theme.muted, marginBottom: codes.length ? 14 : 4 }}>
+        <Icon name="clock" size={16} color={theme.accent} />
+        <span style={{ fontFamily: theme.fontBody, fontSize: 12.5, lineHeight: 1.4 }}>Winner drawn <b style={{ color: theme.text }}>{R.drawDate}</b>, once the painting is fully revealed.</span>
+      </div>
+
+      {codes.length > 0 ? (
+        <>
+          <div style={{ fontFamily: theme.fontBody, fontSize: 11, letterSpacing: '.1em', textTransform: 'uppercase', color: theme.faint, margin: '4px 0 8px' }}>Your entry numbers</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {codes.map((c, i) => (
+              <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderRadius: 12, background: theme.surface, border: `1px solid ${theme.line}` }}>
+                <Icon name="frame" size={16} color={theme.accent} />
+                <span style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 15, letterSpacing: '.06em' }}>{c}</span>
+                <span style={{ marginLeft: 'auto', fontFamily: theme.fontBody, fontSize: 11.5, color: theme.faint }}>Entry #{i + 1}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div style={{ textAlign: 'center', padding: '6px 0 2px' }}>
+          <div style={{ color: theme.muted, fontFamily: theme.fontBody, fontSize: 13.5, lineHeight: 1.5, marginBottom: 14 }}>
+            No entries yet. Every \u201cPrint raffle\u201d reward you reveal adds an entry. Keep revealing to get in the draw.
+          </div>
+          <Btn theme={theme} size="md" style={{ width: '100%' }} onClick={onClose}>Reveal more pixels</Btn>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+// ── batch reveal summary — shown after revealing a pack all at once ───────────
+function RevealSummary({ theme, payload, onClose }) {
+  const Icon = window.Icon;
+  const tally = payload.tally || {};
+  const lines = [
+    { key: 'bonus',     icon: 'plus',  label: 'Free pixels' },
+    { key: 'coupon',    icon: 'tag',   label: '50%-off coupons' },
+    { key: 'wallpaper', icon: 'image', label: 'Wallpapers' },
+    { key: 'raffle',    icon: 'frame', label: 'Raffle entries' },
+    { key: 'jackpot',   icon: 'crown', label: 'Golden pixels' },
+  ].filter((l) => tally[l.key]);
+  return (
+    <div onClick={onClose} style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(3px)', animation: 'ug-fade .2s ease', padding: 24 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: theme.surface, borderRadius: 24, padding: '28px 24px 22px', width: '100%', maxWidth: 330,
+        textAlign: 'center', color: theme.text, boxShadow: '0 30px 70px rgba(0,0,0,.5)', border: `1px solid ${theme.line}`, animation: 'ug-pop .34s cubic-bezier(.2,.9,.3,1.2)' }}>
+        <div style={{ width: 80, height: 80, borderRadius: 22, margin: '0 auto 14px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: theme.accent, boxShadow: theme.accentGlow }}>
+          <Icon name="grid" size={40} color={theme.accentText} sw={1.7} />
+        </div>
+        <div style={{ fontFamily: theme.fontDisplay, fontWeight: theme.displayWeight, fontSize: 26, marginBottom: 6 }}>{payload.count} pixels revealed!</div>
+        <div style={{ color: theme.muted, fontFamily: theme.fontBody, fontSize: 14.5, lineHeight: 1.4, marginBottom: lines.length ? 18 : 22 }}>
+          {lines.length ? 'And here\u2019s what came with them:' : 'A big chunk of the painting just came into view.'}
+        </div>
+        {lines.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+            {lines.map((l) => (
+              <div key={l.key} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 14px', borderRadius: 12, background: theme.surfaceAlt }}>
+                <Icon name={l.icon} size={18} color={theme.accent} />
+                <span style={{ fontFamily: theme.fontBody, fontWeight: 600, fontSize: 14 }}>{l.label}</span>
+                <span style={{ marginLeft: 'auto', fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 16 }}>+{tally[l.key]}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <Btn theme={theme} size="lg" style={{ width: '100%' }} onClick={onClose}>Keep going</Btn>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { PIXEL_PACKS, PAYMENT_LINKS, paymentLinkFor, MiniReveal, RewardPopup, ClaimBox, BundleSheet, PaymentSheet, DailySpinSheet, InviteSheet, StorySheet, LeaderboardSheet, ShareSheet, CompletionOverlay, RewardsSheet, WallpaperSheet, RaffleSheet, RevealSummary });

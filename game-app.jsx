@@ -34,20 +34,21 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
     // payment required → show the claim box (with sprinkles) first, then pay
     const price = cur.couponPct ? +(basePrice * (1 - cur.couponPct)).toFixed(2) : basePrice;
     const reward = window.rollReward();
-    set({ sheet: 'claim', pendingBuy: { count: 1, price, index, reward } });
+    set({ sheet: 'claim', pendingBuy: { count: 1, price, index, reward, packId: price < 1 ? 'single_half' : 'single' } });
   };
 
-  // express bundle: 5 pixels for $4, paid right away
-  const bundle = () => {
-    const cur = peekState();
-    let n = 0; for (let i = 0; i < TOTAL; i++) if (!cur.revealed[i]) n++;
-    if (!n) return;
-    const reward = window.rollReward();
-    set({ sheet: 'claim', pendingBuy: { count: Math.min(5, n), price: 4, reward } });
-  };
+  // open the "Get more pixels" bundle sheet (credit packs)
+  const openBundles = () => set({ sheet: 'bundles' });
 
-  // called by PaymentSheet after a successful payment — reveal the paid pixel(s)
+  // called by PaymentSheet after a successful payment
   const revealPaid = (info) => {
+    // bundle / pixel-pack purchase — reveal all the pack's pixels at random in
+    // one go (no tapping one by one), surfacing every reward they carried
+    // (raffle entries, wallpapers, coupons, free pixels…) in the recap.
+    if (info.kind === 'bundle') {
+      revealRandomBatch(info.credits || 0);
+      return;
+    }
     const cur = peekState();
     const covered = [];
     for (let i = 0; i < TOTAL; i++) if (!cur.revealed[i]) covered.push(i);
@@ -69,6 +70,112 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
   // read latest store synchronously
   const stateRef = React.useRef(state); stateRef.current = state;
   function peekState() { return stateRef.current; }
+
+  // reveal N random covered pixels in one shot, applying + tallying each pixel's
+  // surprise. Used by pixel-pack purchases so 6 / 12 packs unlock instantly
+  // instead of forcing the buyer to tap each square.
+  const revealRandomBatch = (n) => {
+    const cur = peekState();
+    const covered = [];
+    for (let i = 0; i < TOTAL; i++) if (!cur.revealed[i]) covered.push(i);
+    if (!covered.length) return;
+    for (let i = covered.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [covered[i], covered[j]] = [covered[j], covered[i]]; }
+    const take = Math.min(n, covered.length);
+    const picks = covered.slice(0, take);
+    const tally = {};
+    picks.forEach(() => {
+      const r = window.rollReward();
+      window.applyReward(set, r.resolved);
+      tally[r.resolved] = (tally[r.resolved] || 0) + 1;
+    });
+    set((st) => {
+      const rev = { ...st.revealed };
+      picks.forEach((i) => (rev[i] = 'me'));
+      return { ...st, revealed: rev, myPixels: st.myPixels + picks.length };
+    });
+    picks.forEach((idx, k) => setTimeout(() => flashIdx(idx), k * 70));
+    if (theme.celebrate === 'confetti') window.fireConfetti(hostRef.current, theme);
+    set({ revealSummary: { count: picks.length, tally } });
+  };
+
+  // reveal a batch of pixels at once (used by pixel packs — no tapping one by one)
+  const revealMany = (n) => {
+    const cur = peekState();
+    if (cur.freePixels <= 0) return;
+    const covered = [];
+    for (let i = 0; i < TOTAL; i++) if (!cur.revealed[i]) covered.push(i);
+    if (!covered.length) return;
+    for (let i = covered.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [covered[i], covered[j]] = [covered[j], covered[i]]; }
+    const take = Math.min(n, cur.freePixels, covered.length);
+    const picks = covered.slice(0, take);
+    const tally = {};
+    picks.forEach((idx) => {
+      const r = window.rollReward();
+      window.applyReward(set, r.resolved);
+      tally[r.resolved] = (tally[r.resolved] || 0) + 1;
+    });
+    set((st) => {
+      const rev = { ...st.revealed };
+      picks.forEach((i) => (rev[i] = 'me'));
+      return { ...st, revealed: rev, myPixels: st.myPixels + picks.length, freePixels: st.freePixels - picks.length };
+    });
+    picks.forEach((idx, k) => setTimeout(() => flashIdx(idx), k * 70));
+    if (theme.celebrate === 'confetti') window.fireConfetti(hostRef.current, theme);
+    set({ revealSummary: { count: picks.length, tally } });
+  };
+
+  // ── Stripe return verification (server-authoritative) ────────────────────
+  // On return from Stripe we ask our Vercel /api/verify function whether this
+  // checkout session was ACTUALLY paid. Only then do we reveal — and we reveal
+  // exactly what Stripe says was bought (credits read from the session
+  // metadata), so a forged URL can't unlock pixels. If the backend isn't
+  // deployed yet (e.g. the in-app preview has no /api), we fall back to a
+  // best-effort format check so the demo still runs.
+  React.useEffect(() => {
+    let session = null;
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      session = qs.get('unveil_session') || qs.get('session_id') || qs.get('checkout_session_id');
+    } catch (e) {}
+    if (!session) return;
+    const cleanUrl = () => { try { history.replaceState({}, '', window.location.pathname); } catch (e) {} };
+    if ((peekState().paidSessions || []).includes(session)) { cleanUrl(); return; }
+
+    const reconstruct = (v) => v.kind === 'bundle'
+      ? { kind: 'bundle', credits: v.credits }
+      : { count: v.credits || 1 };
+
+    let cancelled = false;
+    (async () => {
+      let v = null;
+      try {
+        const r = await fetch('/api/verify?session=' + encodeURIComponent(session));
+        if (r.ok) v = await r.json();
+      } catch (e) {}
+      if (cancelled) return;
+
+      // backend answered authoritatively
+      if (v && typeof v.paid === 'boolean') {
+        if (!v.paid) { toast('Payment not verified'); cleanUrl(); return; }
+        set((st) => ({ ...st, paidSessions: [...(st.paidSessions || []), session] }));
+        const cur = peekState();
+        revealPaid(cur.pendingBuy && cur.pendingBuy.packId ? cur.pendingBuy : reconstruct(v));
+        set({ sheet: null, pendingBuy: null });
+        cleanUrl();
+        return;
+      }
+
+      // no backend reachable (preview) → best-effort format fallback
+      const looksValid = /^cs_(test|live)_[A-Za-z0-9]+$/.test(session) || /^demo_\d+$/.test(session);
+      if (!looksValid) { toast('Couldn’t verify that payment'); cleanUrl(); return; }
+      set((st) => ({ ...st, paidSessions: [...(st.paidSessions || []), session] }));
+      const cur = peekState();
+      if (cur.pendingBuy) revealPaid(cur.pendingBuy);
+      set({ sheet: null, pendingBuy: null });
+      cleanUrl();
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const showCompletion = revealedCount === TOTAL && !state.reward && state.sheet !== 'share' && !doneSeen;
 
@@ -118,6 +225,7 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
         {/* action chips */}
         <div style={{ display: 'flex', gap: 9, overflowX: 'auto', padding: '14px 16px 4px', scrollbarWidth: 'none' }}>
           {chip('spin', 'Daily spin', 'spin', state.dailyUsed ? null : 'FREE')}
+          {chip('gift', 'Rewards', 'rewards', (state.freePixels + state.wallpapers + state.raffles) || null)}
           {chip('users', 'Invite +1', 'invite')}
           {chip('trophy', 'Leaderboard', 'leaderboard')}
           {chip('share', 'Share', 'share')}
@@ -169,10 +277,10 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
             <div style={{ width: 50, height: 50, borderRadius: 14, background: theme.surfaceAlt, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               <Icon name="grid" size={26} color={theme.accent} /></div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 17 }}>5-pixel bundle</div>
-              <div style={{ fontFamily: theme.fontBody, fontSize: 13, color: theme.muted }}><s style={{ opacity: .6 }}>$5</s> &nbsp;$4 · save 20%</div>
+              <div style={{ fontFamily: theme.fontDisplay, fontWeight: 700, fontSize: 17 }}>Get more pixels</div>
+              <div style={{ fontFamily: theme.fontBody, fontSize: 13, color: theme.muted }}>Packs from $5 · bonus pixels included</div>
             </div>
-            <Btn theme={theme} size="md" onClick={bundle}>Reveal 5</Btn>
+            <Btn theme={theme} size="md" onClick={openBundles}>View packs</Btn>
           </div>
         </div>
 
@@ -236,15 +344,43 @@ function GameApp({ themeId = 'cosmic', instanceId }) {
       <div style={{ flexShrink: 0, padding: '12px 16px 30px', borderTop: `1px solid ${theme.line}`,
         background: themeId === 'arcade' ? theme.bg2 : (theme.deviceDark ? 'rgba(0,0,0,.25)' : theme.surface),
         backdropFilter: 'blur(10px)', position: 'relative', zIndex: 6 }}>
-        <Btn theme={theme} size="lg" style={{ width: '100%' }} onClick={() => buy(null)} disabled={revealedCount === TOTAL}>
-          {revealedCount === TOTAL ? 'Fully revealed ✓' : state.freePixels > 0 ? `Reveal a pixel · FREE (${state.freePixels})` : `Reveal a pixel · ${ufmt(priceNow)}`}
-        </Btn>
+        {state.freePixels > 0 ? (
+          <>
+            <Btn theme={theme} size="lg" style={{ width: '100%' }} onClick={() => revealMany(state.freePixels)} disabled={revealedCount === TOTAL}>
+              {revealedCount === TOTAL ? 'Fully revealed ✓' : `Reveal all ${state.freePixels} at once`}
+            </Btn>
+            {revealedCount !== TOTAL && (
+              <button onClick={() => buy(null)} style={{ width: '100%', marginTop: 9, border: 'none', background: 'transparent', cursor: 'pointer',
+                color: theme.accent, fontFamily: theme.fontBody, fontWeight: 700, fontSize: 13.5, padding: '4px 0', WebkitTapHighlightColor: 'transparent' }}>
+                Or reveal one at a time
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <Btn theme={theme} size="lg" style={{ width: '100%' }} onClick={() => buy(null)} disabled={revealedCount === TOTAL}>
+              {revealedCount === TOTAL ? 'Fully revealed ✓' : `Reveal a pixel · ${ufmt(priceNow)}`}
+            </Btn>
+            {revealedCount !== TOTAL && (
+              <button onClick={openBundles} style={{ width: '100%', marginTop: 9, border: 'none', background: 'transparent', cursor: 'pointer',
+                color: theme.accent, fontFamily: theme.fontBody, fontWeight: 700, fontSize: 13.5, padding: '4px 0', WebkitTapHighlightColor: 'transparent',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Icon name="grid" size={16} color={theme.accent} />Save with a pixel pack — 6 for $5
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       {/* ── overlays ── */}
       <window.Toast theme={theme} toast={state.toast} />
       {state.reward && <window.RewardPopup theme={theme} payload={state.reward} onClose={() => set({ reward: null })} />}
+      {state.revealSummary && <window.RevealSummary theme={theme} payload={state.revealSummary} onClose={() => set({ revealSummary: null })} />}
       {state.sheet === 'claim' && <window.ClaimBox theme={theme} state={state} set={set} onClose={() => set({ sheet: null, pendingBuy: null })} />}
+      {state.sheet === 'bundles' && <window.BundleSheet theme={theme} state={state} set={set} onClose={() => set({ sheet: null })} />}
+      {state.sheet === 'rewards' && <window.RewardsSheet theme={theme} state={state} set={set} onClose={() => set({ sheet: null })} />}
+      {state.sheet === 'wallpapers' && <window.WallpaperSheet theme={theme} state={state} onClose={() => set({ sheet: 'rewards' })} />}
+      {state.sheet === 'raffle' && <window.RaffleSheet theme={theme} state={state} set={set} onClose={() => set({ sheet: 'rewards' })} />}
       {state.sheet === 'payment' && <window.PaymentSheet theme={theme} state={state} set={set} toast={toast} onPaid={revealPaid} onClose={() => set({ sheet: null, pendingBuy: null })} />}
       {state.sheet === 'spin' && <window.DailySpinSheet theme={theme} state={state} set={set} toast={toast} onClose={() => set({ sheet: null })} />}
       {state.sheet === 'invite' && <window.InviteSheet theme={theme} state={state} set={set} toast={toast} onClose={() => set({ sheet: null })} />}
